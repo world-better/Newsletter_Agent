@@ -88,11 +88,10 @@ async def process_and_stream(
                 if content:
                     final_content = content
                 reply_content = final_content
-                try:
-                    yield StreamEvent(event=EventType.DONE, data=json.dumps({"content": final_content}))
-                finally:
-                    await _persist_reply(db, message_id, reply_content, tool_call_logs)
-                    return
+                # Persist BEFORE yielding DONE — normal async loop context, no generator cleanup trap
+                await _persist_reply(db, message_id, reply_content, tool_call_logs)
+                yield StreamEvent(event=EventType.DONE, data=json.dumps({"content": final_content}))
+                return
 
             elif event_name == "RunError":
                 error = getattr(event, "content", str(event))
@@ -101,10 +100,8 @@ async def process_and_stream(
 
         # Fallback: events ended without a terminal event
         reply_content = final_content
-        try:
-            yield StreamEvent(event=EventType.DONE, data=json.dumps({"content": final_content}))
-        finally:
-            await _persist_reply(db, message_id, reply_content, tool_call_logs)
+        await _persist_reply(db, message_id, reply_content, tool_call_logs)
+        yield StreamEvent(event=EventType.DONE, data=json.dumps({"content": final_content}))
 
     except Exception as e:
         yield StreamEvent(event=EventType.ERROR, data=json.dumps({"error": str(e)}))
@@ -120,18 +117,14 @@ async def _persist_reply(
 ):
     """Save assistant reply and tool calls to DB after streaming completes."""
     if not (reply_content or tool_call_logs):
-        print("[PERSIST] nothing to persist")
         return
-    print(f"[PERSIST] saving reply (len={len(reply_content)}) + {len(tool_call_logs)} tool calls")
     try:
         message = await db.get_message_by_id(message_id)
         if not message:
-            print(f"[PERSIST] message {message_id} not found in DB")
             return
         user_id = message["user_id"]
         reply_id = str(uuid.uuid4())
         await db.insert_message(reply_id, user_id, "assistant", reply_content or "")
-        print(f"[PERSIST] inserted assistant msg: {reply_id}")
 
         for tc in tool_call_logs:
             if tc["tool_name"]:
@@ -141,6 +134,5 @@ async def _persist_reply(
                     arguments=tc["arguments"],
                     result=tc["result"],
                 )
-                print(f"[PERSIST] logged tool: {tc['tool_name']}")
     except Exception as e:
         print(f"[PERSIST ERROR] {type(e).__name__}: {e}")

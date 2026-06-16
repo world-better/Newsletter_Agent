@@ -8,3 +8,7 @@
 - client.py
 
 - 跑通；但是context management这里出现问题。
+
+- 并发读写db已正常。
+
+[] 选择切换数据库，或者增加其他的tools，或者已完成
