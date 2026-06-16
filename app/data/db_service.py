@@ -32,6 +32,14 @@ class DBService:
                 logged_at TEXT DEFAULT (datetime('now')),
                 FOREIGN KEY (message_id) REFERENCES messages(id)
             );
+            CREATE TABLE IF NOT EXISTS rss_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(user_id, name)
+            );
         """)
         await self._conn.commit()
 
@@ -65,3 +73,27 @@ class DBService:
     async def close(self):
         if self._conn:
             await self._conn.close()
+
+    # ── RSS subscriptions ──────────────────────────────────────────────────
+
+    async def insert_subscription(self, user_id: str, name: str, url: str):
+        await self._conn.execute(
+            "INSERT OR REPLACE INTO rss_subscriptions(user_id, name, url) VALUES(?,?,?)",
+            (user_id, name, url)
+        )
+        await self._conn.commit()
+
+    async def list_subscriptions(self, user_id: str) -> list[dict]:
+        cursor = await self._conn.execute(
+            "SELECT name, url FROM rss_subscriptions WHERE user_id = ? ORDER BY created_at ASC",
+            (user_id,)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def delete_subscription(self, user_id: str, name: str) -> bool:
+        cursor = await self._conn.execute(
+            "DELETE FROM rss_subscriptions WHERE user_id = ? AND name = ?",
+            (user_id, name)
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0

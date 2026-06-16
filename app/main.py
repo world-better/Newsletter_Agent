@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app.routes.messages import router as messages_router
 from app.data.db_service import DBService
-from app.services.agent_core import create_agent
+from app.services.agent_core import create_agent, init_db
 from app.services.agent_service import AgentService
 
 db = DBService("app.db")
@@ -14,6 +14,7 @@ db = DBService("app.db")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init()
+    await init_db(db)  # inject db reference for agent_core tools
     agent = create_agent()
     app.state.agent_svc = AgentService(db, agent)
     yield

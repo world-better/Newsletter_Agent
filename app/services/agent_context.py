@@ -26,4 +26,7 @@ async def assemble_context(db: DBService, message_id: str) -> List[Dict[str, str
     user_id = message["user_id"]
     history_rows = await db.get_history(user_id)
     history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
-    return trim_context(history)
+    result = trim_context(history)
+    # Inject user identity so tools that need user_id can be called properly
+    result.insert(0, {"role": "system", "content": f"Current user ID: {user_id}"})
+    return result
