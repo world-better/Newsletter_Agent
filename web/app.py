@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 
 import httpx
@@ -15,7 +16,7 @@ import streamlit as st
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-FASTAPI_BASE = "http://127.0.0.1:8001"
+FASTAPI_BASE = os.environ.get("AGENT_API_BASE", "http://127.0.0.1:8001")
 API = f"{FASTAPI_BASE}/api/v1"
 
 PRESETS = [
@@ -172,26 +173,27 @@ def main():
     # Preset buttons
     st.subheader("💡 试试")
     cols = st.columns(3)
-    chosen = None
+    if "chosen_preset" not in st.session_state:
+        st.session_state.chosen_preset = ""
     for i, text in enumerate(PRESETS):
         col = cols[i % 3]
         if col.button(text, key=f"preset_{i}", use_container_width=True):
-            chosen = text
+            st.session_state.chosen_preset = text
 
     # Input area
     st.subheader("📝 主题 / 任务")
-    default_val = chosen if chosen else ""
-    prompt = st.text_input(
+    prompted = st.text_input(
         "输入你想了解的内容，或点上面的预设按钮",
-        value=default_val,
+        value=st.session_state.chosen_preset,
         key="prompt_input",
         placeholder="例如：帮我看看最近HackerNews和知乎有什么新东西...",
     )
 
     generate_btn = st.button("🚀 生成简报", type="primary", use_container_width=True)
 
-    if generate_btn and prompt:
-        process_prompt(prompt)
+    if generate_btn and prompted:
+        st.session_state.chosen_preset = ""  # clear after use
+        process_prompt(prompted)
 
 
 def process_prompt(prompt: str):
