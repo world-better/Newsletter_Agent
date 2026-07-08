@@ -59,39 +59,6 @@ def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str
     return function_call(**arguments)
 
 
-# ── Existing: HackerNews brief ─────────────────────────────────────────────
-
-@tool(
-    name="generate_creative_brief",
-    description="Synthesizes HackerNews data into a structured magazine brief.",
-    tool_hooks=[logger_hook],
-)
-def generate_creative_brief(
-    num_stories: int,
-    writer_persona: str,
-    key_insights_focus: List[str],
-    output_format: OutputFormat,
-) -> Dict[str, Any]:
-    """Fetch top stories and format them based on editorial constraints."""
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
-    story_ids = response.json()[:num_stories]
-
-    titles = []
-    for s_id in story_ids:
-        s_data = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{s_id}.json").json()
-        titles.append(s_data.get("title", "No Title"))
-
-    return {
-        "metadata": {
-            "source": "HackerNews",
-            "persona": writer_persona,
-            "focus": key_insights_focus,
-            "word_target": output_format.target_word_count,
-        },
-        "content": f"Brief ({output_format.target_word_count} words): " + ", ".join(titles),
-    }
-
-
 # ── RSS subscription tools ─────────────────────────────────────────────────
 
 @tool(
@@ -142,6 +109,9 @@ def fetch_subscribed_feeds(
         return {"error": "Database not initialized"}
 
     subs = _run_async(_db.list_subscriptions(user_id))
+    # Fallback: if user has no subscriptions, use the default shared set
+    if not subs and user_id != "default_user":
+        subs = _run_async(_db.list_subscriptions("default_user"))
     if not subs:
         return {
             "metadata": {"source": "RSS Subscriptions", "count": 0},
@@ -255,5 +225,5 @@ def create_agent() -> Agent:
             api_key=os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
         ),
-        tools=[generate_creative_brief, add_rss_subscription, delete_rss_subscription, fetch_subscribed_feeds],
+        tools=[add_rss_subscription, delete_rss_subscription, fetch_subscribed_feeds],
     )

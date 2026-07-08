@@ -43,6 +43,20 @@ class DBService:
         """)
         await self._conn.commit()
 
+        # Pre-seed default subscriptions (shared baseline for all users)
+        await self._conn.executemany(
+            "INSERT OR IGNORE INTO rss_subscriptions(user_id, name, url) VALUES(?,?,?)",
+            [
+                ("default_user", "Hacker News 头条", "https://hnrss.org/frontpage"),
+                ("default_user", "Show HN", "https://hnrss.org/show"),
+                ("default_user", "NYT Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
+                ("default_user", "BBC Technology", "https://feeds.bbci.co.uk/news/technology/rss.xml"),
+                ("default_user", "知乎日报", "https://rsshub.rssforever.com/zhihu/daily"),
+                ("default_user", "V2EX 最新", "https://rsshub.rssforever.com/v2ex/topics/latest"),
+            ],
+        )
+        await self._conn.commit()
+
     async def insert_message(self, message_id: str, user_id: str, role: str, content: str):
         await self._conn.execute(
             "INSERT INTO messages(id, user_id, role, content) VALUES(?,?,?,?)",
