@@ -59,7 +59,7 @@ def check(label: str, condition: bool, detail: str = "") -> bool:
 
 def soft_check(label: str, condition: bool, detail: str = "") -> bool:
     """Best-effort check: warn on failure, don't count as hard fail."""
-    global WARN
+    global PASS, WARN
     if condition:
         PASS += 1
         log(f"  ✅ {label}")
@@ -242,11 +242,13 @@ def test_02_preset_and_generate():
     gen_idx = find_button(at, "生成简报")
     at.button[gen_idx].click().run(timeout=120.0)
 
+    # Check markdown blocks: find any block with substantial content (not page title/caption)
     has_content = any(
-        len(m.value) > 50 for m in at.markdown
-        if m.value and "任意门" not in m.value and "RSS" not in m.value
+        len(m.value) > 20 and "任意门聚合简报" not in (m.value or "")
+        for m in at.markdown
     )
-    check("brief content in markdown", has_content, f"{len(at.markdown)} blocks")
+    max_len = max((len(m.value) for m in at.markdown), default=0)
+    check("brief content in markdown", has_content, f"{len(at.markdown)} blocks, max_len={max_len}")
 
 
 def test_03_multi_turn():

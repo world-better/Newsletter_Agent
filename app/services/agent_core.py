@@ -221,7 +221,7 @@ def create_agent() -> Agent:
     """Build the agent with tools. Called once at startup."""
     return Agent(
         model=OpenAILike(
-            id=os.getenv("OPENROUTER_MODEL_ID", "openrouter/free"),
+            id=os.getenv("OPENROUTER_MODEL_ID", "deepseek/deepseek-v4-flash"),
             api_key=os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
         ),
