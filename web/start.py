@@ -50,7 +50,12 @@ else:
 
 # ── Start Streamlit ──
 frontend = subprocess.Popen(
-    [sys.executable, "-m", "streamlit", "run", "web/app.py", "--server.port", str(args.web_port)],
+    [sys.executable, "-m", "streamlit", "run", "web/app.py",
+     "--server.port", str(args.web_port),
+     "--server.headless", "true",
+     "--server.enableCORS", "false",
+     "--server.enableXsrfProtection", "false",
+     "--browser.gatherUsageStats", "false"],
     cwd=PROJECT_DIR,
 )
 print(f"[web] Streamlit PID {frontend.pid} on :{args.web_port}")
