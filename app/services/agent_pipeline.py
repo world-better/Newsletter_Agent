@@ -123,8 +123,9 @@ async def _persist_reply(
         if not message:
             return
         user_id = message["user_id"]
+        session_id = message["session_id"] if "session_id" in message.keys() else None
         reply_id = str(uuid.uuid4())
-        await db.insert_message(reply_id, user_id, "assistant", reply_content or "")
+        await db.insert_message(reply_id, user_id, "assistant", reply_content or "", session_id)
 
         for tc in tool_call_logs:
             if tc["tool_name"]:

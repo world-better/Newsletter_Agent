@@ -160,12 +160,30 @@ def render_sidebar():
         is_active = (st.session_state.session_id == sid)
         label = s.get("title", "")[:25]
         prefix = "▸ " if is_active else "  "
-        if st.sidebar.button(f"{prefix}{label}", key=f"sess_{sid}", use_container_width=True):
+
+        col1, col2 = st.sidebar.columns([5, 1])
+        if col1.button(f"{prefix}{label}", key=f"sess_{sid}", use_container_width=True):
             st.session_state.session_id = sid
             st.session_state.session_title = s.get("title", "")
-            # Load message history for this session
             st.session_state.messages = _load_session_messages(sid)
             st.rerun()
+
+        # Rename button (pencil)
+        rename_key = f"renaming_{sid}"
+        if col2.button("✏️", key=f"edit_{sid}", help="重命名"):
+            st.session_state[rename_key] = True
+
+        if st.session_state.get(rename_key):
+            new_name = st.sidebar.text_input("新名称", value=label, key=f"name_{sid}")
+            c1, c2 = st.sidebar.columns(2)
+            if c1.button("保存", key=f"save_{sid}"):
+                if new_name.strip():
+                    _rename_session(sid, new_name.strip())
+                    st.session_state[rename_key] = False
+                    st.rerun()
+            if c2.button("取消", key=f"cancel_{sid}"):
+                st.session_state[rename_key] = False
+                st.rerun()
 
     st.sidebar.markdown("---")
     st.sidebar.title("📡 订阅管理")
