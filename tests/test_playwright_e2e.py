@@ -21,7 +21,7 @@ SCREENSHOT_DIR.mkdir(exist_ok=True)
 PORT_API = int(os.environ.get("API_PORT", "8001"))
 PORT_WEB = int(os.environ.get("WEB_PORT", "8501"))
 BASE_API = f"http://127.0.0.1:{PORT_API}"
-BASE_WEB = f"http://localhost:{PORT_WEB}"
+BASE_WEB = f"http://127.0.0.1:{PORT_WEB}"
 
 PASS = 0; FAIL = 0
 
