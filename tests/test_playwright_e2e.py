@@ -354,9 +354,17 @@ def main():
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)  # headless=True has network issues in CI
-            ctx = browser.new_context(viewport={"width": 1400, "height": 900})
-            page = ctx.new_page()
+            # Connect to user's already-open browser via CDP
+            try:
+                browser = p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                ctx = browser.contexts[0]
+                page = ctx.new_page()
+                log("Connected to existing browser via CDP")
+            except Exception:
+                log("No CDP browser found — launching new one")
+                browser = p.chromium.launch(headless=False)
+                ctx = browser.new_context(viewport={"width": 1400, "height": 900})
+                page = ctx.new_page()
 
             test_01_page_load(page)
             test_02_suggestion_click(page)
