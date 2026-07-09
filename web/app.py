@@ -317,13 +317,13 @@ def main():
     )
     cols = st.columns(len(SUGGESTIONS))
     for i, sug in enumerate(SUGGESTIONS):
-        if cols[i].button(sug, key=f"sug_{i}", use_container_width=True):
+        if cols[i].button(sug, key=f"sug_{i}", use_container_width=True, disabled=st.session_state.streaming):
             st.session_state.messages.append({"role": "user", "content": sug})
             _process_user_message(sug)
             st.rerun()
 
     # ── Chat input ──
-    if prompt := st.chat_input("输入你想了解的内容，Enter 发送..."):
+    if prompt := st.chat_input("输入你想了解的内容，Enter 发送...", disabled=st.session_state.streaming):
         st.session_state.messages.append({"role": "user", "content": prompt})
         _process_user_message(prompt)
         st.rerun()
