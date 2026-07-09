@@ -1,6 +1,3 @@
-[general]
-email = ""
-
 [browser]
 gatherUsageStats = false
 
