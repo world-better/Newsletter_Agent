@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Streamlit web frontend for 任意门聚合简报.
+"""Streamlit web frontend — AI chat format + subscription sidebar.
 
 Connects to the FastAPI agent backend via HTTP (same protocol as client.py).
 Does NOT import agno/aiosqlite — keeps hot-plugin separation clean.
@@ -19,228 +19,263 @@ import streamlit as st
 FASTAPI_BASE = os.environ.get("AGENT_API_BASE", "http://127.0.0.1:8001")
 API = f"{FASTAPI_BASE}/api/v1"
 
-PRESETS = [
-    "看看HackerNews今天最新有什么",
-    "Show HN有什么有意思的新项目",
-    "知乎日报今天聊了什么话题",
-    "V2EX社区今天有什么技术讨论",
-    "帮我聚合HackerNews和NYT的科技新闻",
-    "BBC和NYT本周科技趋势",
+DEFAULT_SUBS = [
+    ("Hacker News 头条", "hnrss.org/frontpage"),
+    ("NYT Technology", "rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
+    ("BBC Technology", "feeds.bbci.co.uk/news/technology/rss.xml"),
+    ("知乎日报", "rsshub.rssforever.com/zhihu/daily"),
+    ("V2EX 最新", "rsshub.rssforever.com/v2ex/topics/latest"),
+]
+
+SUGGESTIONS = [
+    "看看HackerNews今天有什么",
+    "Show HN有什么新项目",
+    "知乎日报今天聊了什么",
+    "帮我聚合科技新闻做简报",
 ]
 
 # ── Page setup ──────────────────────────────────────────────────────────────
 
-st.set_page_config(
-    page_title="任意门聚合简报",
-    page_icon="🔍",
-    layout="wide",
-)
-st.title("🔍 任意门聚合简报")
-st.caption("基于 RSS 多源聚合 · AI 自动生成结构化简报")
+st.set_page_config(page_title="任意门聚合简报", page_icon="🔍", layout="wide")
 
-
-# ── Session ─────────────────────────────────────────────────────────────────
+# Hide default Streamlit chrome
+st.markdown("""
+<style>
+    header[data-testid="stHeader"] {display: none;}
+    .stApp {margin-top: -40px;}
+</style>
+""", unsafe_allow_html=True)
 
 if "user_id" not in st.session_state:
     st.session_state.user_id = str(uuid.uuid4())[:8]
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "session_id" not in st.session_state:
+    st.session_state.session_id = None
+if "session_title" not in st.session_state:
+    st.session_state.session_title = "新会话"
 
 
-# ── SSE stream consumer ─────────────────────────────────────────────────────
+# ── Streaming SSE consumer (threaded — yields tokens in real-time) ──────────
 
-async def _consume_sse(url: str) -> dict:
-    """Read SSE stream, return dict with reasoning / content / tools / errors."""
-    result = {"reasoning": [], "tokens": [], "tool_calls": [], "error": None}
-    async with httpx.AsyncClient(timeout=120.0) as c:
-        async with c.stream("GET", url) as resp:
-            resp.raise_for_status()
-            event_type = ""
-            data_buf = ""
-            async for line in resp.aiter_lines():
-                if line.startswith("event:"):
-                    event_type = line.split(":", 1)[1].strip()
-                elif line.startswith("data:"):
-                    data_buf = line.split(":", 1)[1].strip()
-                elif line == "" and event_type:
-                    if event_type == "token":
-                        try:
-                            result["tokens"].append(json.loads(data_buf).get("content", ""))
-                        except json.JSONDecodeError:
-                            pass
-                    elif event_type == "reasoning":
-                        try:
-                            result["reasoning"].append(json.loads(data_buf).get("content", ""))
-                        except json.JSONDecodeError:
-                            pass
-                    elif event_type == "tool_call":
-                        try:
-                            tc = json.loads(data_buf)
-                            result["tool_calls"].append(tc.get("tool_name", ""))
-                        except json.JSONDecodeError:
-                            pass
-                    elif event_type == "error":
-                        result["error"] = data_buf
-                    elif event_type == "done":
-                        return result
-                    event_type = ""
-                    data_buf = ""
-    return result
+import queue
+import threading
 
 
-def stream_reply(user_id: str, prompt: str) -> dict:
-    """Send prompt → consume SSE → return structured result."""
-    return asyncio.run(_stream_reply_async(user_id, prompt))
+def stream_events(user_id: str, prompt: str, session_id: str | None = None):
+    """Generator that yields (event_type, content) tuples in real-time via background thread."""
+    q: queue.Queue = queue.Queue()
+
+    async def _fetch():
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as c:
+                body: dict = {"user_id": user_id, "content": prompt}
+                if session_id:
+                    body["session_id"] = session_id
+                r = await c.post(f"{API}/messages", json=body)
+                r.raise_for_status()
+                mid = r.json()["message_id"]
+                async with c.stream("GET", f"{API}/messages/{mid}/stream") as s:
+                    event_type, dbuf = "", ""
+                    async for line in s.aiter_lines():
+                        if line.startswith("event:"): event_type = line.split(":", 1)[1].strip()
+                        elif line.startswith("data:"): dbuf = line.split(":", 1)[1].strip()
+                        elif line == "" and event_type:
+                            content = ""
+                            try:
+                                payload = json.loads(dbuf)
+                                if event_type in ("token", "reasoning"):
+                                    content = payload.get("content", dbuf)
+                                elif event_type == "tool_call":
+                                    content = payload.get("tool_name", dbuf)
+                                elif event_type == "error":
+                                    content = dbuf
+                            except json.JSONDecodeError:
+                                content = dbuf
+                            q.put((event_type, content))
+                            if event_type in ("done", "error"):
+                                return
+                            event_type, dbuf = "", ""
+        except Exception as e:
+            q.put(("error", str(e)))
+
+    def _run():
+        asyncio.run(_fetch())
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    while True:
+        item = q.get()
+        yield item
+        if item[0] in ("done", "error"):
+            break
 
 
-async def _stream_reply_async(user_id: str, prompt: str) -> dict:
-    async with httpx.AsyncClient(timeout=120.0) as c:
-        # Post message
-        resp = await c.post(f"{API}/messages", json={"user_id": user_id, "content": prompt})
-        resp.raise_for_status()
-        msg_id = resp.json()["message_id"]
-        # Consume SSE
-        return await _consume_sse(f"{API}/messages/{msg_id}/stream")
-
-
-# ── Sidebar: Subscription management ────────────────────────────────────────
-
-async def _load_subs(user_id: str) -> list[dict]:
-    async with httpx.AsyncClient(timeout=10.0) as c:
-        r = await c.get(f"{API}/debug/history/{user_id}")
+def _list_sessions() -> list[dict]:
+    """Fetch session list from API."""
+    try:
+        r = httpx.get(f"{API}/sessions/{st.session_state.user_id}", timeout=5)
         r.raise_for_status()
-        return r.json().get("messages", [])
+        return r.json().get("sessions", [])
+    except Exception:
+        return []
 
 
-def add_sub(user_id: str, name: str, url: str) -> str:
-    """Send an add-subscription prompt to the agent."""
-    return stream_reply(user_id, f"请添加一个RSS订阅订阅源，名称叫 {name}，地址是 {url}，user_id是 {user_id}")["tokens"]
-
-
-def del_sub(user_id: str, name: str) -> str:
-    """Send a delete-subscription prompt to the agent."""
-    return stream_reply(user_id, f"请删除订阅源 {name}，user_id是 {user_id}")["tokens"]
-
+# ── Sidebar ─────────────────────────────────────────────────────────────────
 
 def render_sidebar():
-    st.sidebar.header("📡 管理订阅")
-    st.sidebar.caption(f"会话 ID: `{st.session_state.user_id}`")
+    # ── Session list ──
+    st.sidebar.markdown("### 💬 会话")
+    if st.sidebar.button("＋ 新会话", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.session_id = None
+        st.session_state.session_title = "新会话"
+        st.rerun()
 
-    # Add subscription
-    st.sidebar.subheader("+ 添加订阅")
+    user_sessions = _list_sessions()
+    if user_sessions:
+        for s in user_sessions:
+            label = s.get("title", "新会话")[:20]
+            if st.sidebar.button(label, key=f"sess_{s['id']}", use_container_width=True):
+                st.session_state.session_id = s["id"]
+                st.session_state.session_title = s.get("title", "新会话")
+                # Load messages for this session — just set empty, agent context handles history
+                st.session_state.messages = []
+                st.rerun()
+
+    st.sidebar.markdown("---")
+    st.sidebar.title("📡 订阅管理")
+
+    # ── Default subscriptions (prominent) ──
+    st.sidebar.markdown("### 默认订阅源")
+    for name, url in DEFAULT_SUBS:
+        st.sidebar.markdown(
+            f'<div style="padding:4px 0;border-bottom:1px solid #333;margin-bottom:2px">'
+            f'<span style="font-weight:600;font-size:15px">{name}</span><br>'
+            f'<span style="font-size:11px;color:#999">{url}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Add subscription (same visual weight) ──
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### + 添加订阅")
     sub_name = st.sidebar.text_input("名称", key="add_name", placeholder="例如: GitHub Trending")
     sub_url = st.sidebar.text_input("URL", key="add_url", placeholder="例如: https://hnrss.org/frontpage")
-    if st.sidebar.button("添加订阅源"):
+    if st.sidebar.button("添加订阅源", use_container_width=True):
         if sub_name and sub_url:
             with st.sidebar:
                 with st.spinner("添加中..."):
-                    stream_reply(
+                    list(stream_events(
                         st.session_state.user_id,
                         f"请添加RSS订阅源，名称叫 {sub_name}，地址是 {sub_url}，user_id是 {st.session_state.user_id}",
-                    )
+                        st.session_state.session_id,
+                    ))
                 st.success(f"已添加: {sub_name}")
                 st.rerun()
         else:
-            st.sidebar.warning("名称和URL不能为空")
+            st.sidebar.warning("名称和 URL 不能为空")
 
-    # Delete subscription
-    st.sidebar.subheader("× 删除订阅")
-    del_name = st.sidebar.text_input("要删除的订阅名称", key="del_name", placeholder="输入名称后点击删除")
-    if st.sidebar.button("删除订阅源"):
-        if del_name:
-            with st.sidebar:
-                with st.spinner("删除中..."):
-                    stream_reply(
-                        st.session_state.user_id,
-                        f"请删除订阅源 {del_name}，user_id是 {st.session_state.user_id}",
-                    )
-                st.info(f"已删除: {del_name}")
-                st.rerun()
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def _process_user_message(prompt: str):
+    """Send prompt to agent, stream reply in real-time, append to history."""
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        reasoning_buf = []
+        content_buf = []
+        tools_buf = []
+        error_msg = None
+
+        # Streaming containers
+        reasoning_expander = st.expander("💭 思考过程", expanded=False)
+        reasoning_placeholder = reasoning_expander.empty()
+        tools_placeholder = st.empty()
+        content_placeholder = st.empty()
+
+        for ev_type, ev_content in stream_events(st.session_state.user_id, prompt, st.session_state.session_id):
+            if ev_type == "reasoning":
+                reasoning_buf.append(ev_content)
+                reasoning_placeholder.markdown(
+                    f'<span style="color:#999;font-size:13px">{"".join(reasoning_buf)}</span>',
+                    unsafe_allow_html=True,
+                )
+            elif ev_type == "token":
+                content_buf.append(ev_content)
+                content_placeholder.markdown("".join(content_buf))
+            elif ev_type == "tool_call":
+                tools_buf.append(ev_content)
+                tools_placeholder.caption(f"🔧 调用工具：{', '.join(tools_buf)}")
+            elif ev_type == "error":
+                error_msg = ev_content
+
+        # Clean up empty containers
+        if not reasoning_buf:
+            reasoning_expander.empty()
+        if not tools_buf:
+            tools_placeholder.empty()
+
+        if error_msg:
+            st.error(f"出错了：{error_msg}")
+            st.session_state.messages.append({
+                "role": "assistant", "content": f"❌ {error_msg}",
+                "reasoning": "", "tool_calls": [],
+            })
         else:
-            st.sidebar.warning("请输入要删除的订阅名称")
+            final_content = "".join(content_buf) or "Agent 没有返回内容。"
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": final_content,
+                "reasoning": "".join(reasoning_buf),
+                "tool_calls": tools_buf,
+            })
 
-    # Current subscriptions (blurb)
-    st.sidebar.divider()
-    st.sidebar.caption(
-        "默认订阅源：HackerNews · Show HN · NYT Tech · BBC Tech · 知乎日报 · V2EX\n\n"
-        "你可以添加自己的 RSS 订阅源覆盖默认列表。"
-    )
-
-
-# ── Main UI ─────────────────────────────────────────────────────────────────
 
 def main():
     render_sidebar()
 
-    # Preset buttons
-    st.subheader("💡 试试")
-    cols = st.columns(3)
-    if "chosen_preset" not in st.session_state:
-        st.session_state.chosen_preset = ""
-    for i, text in enumerate(PRESETS):
-        col = cols[i % 3]
-        if col.button(text, key=f"preset_{i}", use_container_width=True):
-            st.session_state.chosen_preset = text
+    # ── Chat history (if any) ──
+    for msg in st.session_state.messages:
+        role = msg["role"]
+        with st.chat_message(role):
+            if role == "assistant" and msg.get("reasoning"):
+                with st.expander("💭 思考过程", expanded=False):
+                    st.markdown(f'<span style="color:#777;font-size:13px">{msg["reasoning"]}</span>',
+                               unsafe_allow_html=True)
+            if msg.get("tool_calls"):
+                st.caption(f"🔧 {', '.join(msg['tool_calls'])}")
+            st.markdown(msg["content"])
 
-    # Input area
-    st.subheader("📝 主题 / 任务")
-    prompted = st.text_input(
-        "输入你想了解的内容，或点上面的预设按钮",
-        value=st.session_state.chosen_preset,
-        key="prompt_input",
-        placeholder="例如：帮我看看最近HackerNews和知乎有什么新东西...",
-    )
-
-    generate_btn = st.button("🚀 生成简报", type="primary", use_container_width=True)
-
-    if generate_btn and prompted:
-        st.session_state.chosen_preset = ""  # clear after use
-        process_prompt(prompted)
-
-
-def process_prompt(prompt: str):
-    """Send prompt, show streaming results."""
-    user_id = st.session_state.user_id
-
-    # Progress containers
-    status_area = st.empty()
-    reasoning_expander = st.expander("💭 AI 思考过程", expanded=False)
-    output_area = st.empty()
-    tool_area = st.empty()
-    source_area = st.empty()
-
-    status_area.info("⏳ Agent 正在聚合信息...")
-
-    result = stream_reply(user_id, prompt)
-
-    if result.get("error"):
-        status_area.error(f"❌ 出错了：{result['error']}")
-        return
-
-    # Reasoning
-    reasoning_text = "".join(result.get("reasoning", []))
-    if reasoning_text:
-        reasoning_expander.markdown(
-            f'<span style="color:#888;">{reasoning_text}</span>',
+    # ── Welcome state (empty chat) ──
+    if not st.session_state.messages:
+        st.markdown(
+            '<div style="text-align:center;padding:40px 0 4px 0">'
+            '<h2 style="margin:0">🔍 任意门聚合简报</h2>'
+            '<p style="color:#888;font-size:13px;margin:4px 0 0 0">AI 多源聚合 · 输入主题即可获得结构化简报</p>'
+            '</div>',
             unsafe_allow_html=True,
         )
 
-    # Tool calls
-    tools = result.get("tool_calls", [])
-    if tools:
-        tool_area.caption(f"🔧 调用工具：{' · '.join(tools)}")
-
-    # Main output
-    content = "".join(result.get("tokens", []))
-    if content:
-        status_area.empty()
-        output_area.markdown(content)
-    else:
-        status_area.warning("Agent 没有返回内容。")
-
-    # Sources
-    source_area.divider()
-    source_area.caption(
-        "📡 信息来源：RSS 多源聚合 (HackerNews · Show HN · NYT Technology · BBC Technology · 知乎日报 · V2EX)"
+    # ── Suggestion chips (compact, above chat_input) ──
+    st.markdown(
+        '<p style="color:#888;font-size:12px;margin:12px 0 2px 8px">💡 试试</p>',
+        unsafe_allow_html=True,
     )
+    cols = st.columns(len(SUGGESTIONS))
+    for i, sug in enumerate(SUGGESTIONS):
+        if cols[i].button(sug, key=f"sug_{i}", use_container_width=True):
+            st.session_state.messages.append({"role": "user", "content": sug})
+            _process_user_message(sug)
+            st.rerun()
+
+    # ── Chat input ──
+    if prompt := st.chat_input("输入你想了解的内容，Enter 发送..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        _process_user_message(prompt)
+        st.rerun()
 
 
 if __name__ == "__main__":

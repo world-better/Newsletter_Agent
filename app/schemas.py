@@ -15,6 +15,7 @@ class EventType(StrEnum):
 class SendMessageRequest(BaseModel):
     user_id: str = Field(..., description="Identifier for the user session")
     content: str = Field(..., min_length=1, description="User message text")
+    session_id: str | None = Field(None, description="Chat session ID; auto-created if omitted")
 
 
 class SendMessageResponse(BaseModel):

@@ -40,15 +40,27 @@ class DBService:
                 created_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(user_id, name)
             );
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT DEFAULT '新会话',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
         """)
         await self._conn.commit()
+
+        # Migrate: add session_id to messages if column doesn't exist
+        try:
+            await self._conn.execute("ALTER TABLE messages ADD COLUMN session_id TEXT REFERENCES sessions(id)")
+            await self._conn.commit()
+        except Exception:
+            pass  # column already exists
 
         # Pre-seed default subscriptions (shared baseline for all users)
         await self._conn.executemany(
             "INSERT OR IGNORE INTO rss_subscriptions(user_id, name, url) VALUES(?,?,?)",
             [
                 ("default_user", "Hacker News 头条", "https://hnrss.org/frontpage"),
-                ("default_user", "Show HN", "https://hnrss.org/show"),
                 ("default_user", "NYT Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"),
                 ("default_user", "BBC Technology", "https://feeds.bbci.co.uk/news/technology/rss.xml"),
                 ("default_user", "知乎日报", "https://rsshub.rssforever.com/zhihu/daily"),
@@ -57,10 +69,10 @@ class DBService:
         )
         await self._conn.commit()
 
-    async def insert_message(self, message_id: str, user_id: str, role: str, content: str):
+    async def insert_message(self, message_id: str, user_id: str, role: str, content: str, session_id: str | None = None):
         await self._conn.execute(
-            "INSERT INTO messages(id, user_id, role, content) VALUES(?,?,?,?)",
-            (message_id, user_id, role, content)
+            "INSERT INTO messages(id, user_id, role, content, session_id) VALUES(?,?,?,?,?)",
+            (message_id, user_id, role, content, session_id)
         )
         await self._conn.commit()
 
@@ -87,6 +99,24 @@ class DBService:
     async def close(self):
         if self._conn:
             await self._conn.close()
+
+    # ── Sessions ───────────────────────────────────────────────────────────
+
+    async def create_session(self, user_id: str, title: str = "新会话") -> dict:
+        sid = str(__import__("uuid").uuid4())
+        await self._conn.execute(
+            "INSERT INTO sessions(id, user_id, title) VALUES(?,?,?)",
+            (sid, user_id, title)
+        )
+        await self._conn.commit()
+        return {"id": sid, "user_id": user_id, "title": title}
+
+    async def list_sessions(self, user_id: str) -> list[dict]:
+        cursor = await self._conn.execute(
+            "SELECT id, title, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
 
     # ── RSS subscriptions ──────────────────────────────────────────────────
 

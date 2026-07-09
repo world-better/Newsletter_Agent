@@ -15,11 +15,22 @@ class AgentService:
         self._db = db
         self._agent = agent
 
-    async def handle_incoming_message(self, message_id: str, user_id: str, content: str):
-        """Persist user message to DB."""
-        await self._db.insert_message(message_id, user_id, "user", content)
+    async def handle_incoming_message(self, message_id: str, user_id: str, content: str,
+                                       session_id: str | None = None):
+        """Persist user message to DB. Auto-create session if needed."""
+        if session_id is None:
+            # Create a new default session
+            sess = await self._db.create_session(user_id)
+            session_id = sess["id"]
+        await self._db.insert_message(message_id, user_id, "user", content, session_id)
 
     async def stream_events(self, message_id: str) -> AsyncIterator[StreamEvent]:
         """Delegate all lifecycle orchestration to the pipeline."""
         async for event in process_and_stream(self._db, self._agent, message_id):
             yield event
+
+    async def create_session(self, user_id: str, title: str = "新会话") -> dict:
+        return await self._db.create_session(user_id, title)
+
+    async def list_sessions(self, user_id: str) -> list[dict]:
+        return await self._db.list_sessions(user_id)
