@@ -18,8 +18,8 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 SCREENSHOT_DIR = PROJECT_DIR / "tests" / "screenshots"
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
-PORT_API = 18002
-PORT_WEB = 8502
+PORT_API = int(os.environ.get("API_PORT", "8001"))
+PORT_WEB = int(os.environ.get("WEB_PORT", "8501"))
 BASE_API = f"http://127.0.0.1:{PORT_API}"
 BASE_WEB = f"http://localhost:{PORT_WEB}"
 
@@ -55,54 +55,33 @@ def kill_port(port):
             subprocess.run(f"taskkill /F /PID {l.strip().split()[-1]}", shell=True, capture_output=True)
 
 
-def start_servers():
-    log("Starting servers...")
-    for p in [PORT_API, PORT_WEB]: kill_port(p)
-    for f in [PROJECT_DIR / "app.db", PROJECT_DIR / "app.db-wal", PROJECT_DIR / "app.db-shm"]:
-        try: os.remove(f)
-        except: pass
-    time.sleep(1)
+def check_servers():
+    """Verify servers are already running. Expect user started them separately."""
+    import httpx
+    ok = True
+    try:
+        r = httpx.get(f"{BASE_API}/", timeout=3)
+        if r.status_code != 200:
+            log(f"❌ FastAPI not ready on :{PORT_API}")
+            ok = False
+    except Exception:
+        log(f"❌ FastAPI unreachable on :{PORT_API}")
+        ok = False
 
-    # FastAPI
-    subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(PORT_API), "--log-level", "warning"],
-        cwd=PROJECT_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    # Streamlit
-    env = os.environ.copy()
-    env["AGENT_API_BASE"] = BASE_API
-    subprocess.Popen(
-        [sys.executable, "-m", "streamlit", "run", "web/app.py",
-         "--server.port", str(PORT_WEB),
-         "--server.address", "0.0.0.0",
-         "--server.headless", "true",
-         "--browser.gatherUsageStats", "false"],
-        cwd=PROJECT_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=env,
-    )
+    try:
+        r = httpx.get(BASE_WEB, timeout=3)
+        if r.status_code != 200:
+            log(f"❌ Streamlit not ready on :{PORT_WEB}")
+            ok = False
+    except Exception:
+        log(f"❌ Streamlit unreachable on :{PORT_WEB}")
+        ok = False
 
-    # Wait for FastAPI
-    for _ in range(30):
-        try:
-            import httpx
-            if httpx.get(f"{BASE_API}/", timeout=2).status_code == 200:
-                break
-        except: pass
-        time.sleep(1)
-    log("FastAPI ready")
-
-    # Wait for Streamlit (localhost for IPv6)
-    for _ in range(15):
-        try:
-            import httpx
-            if httpx.get(BASE_WEB, timeout=2).status_code == 200:
-                log("Streamlit ready")
-                break
-        except: pass
-        time.sleep(1)
+    if ok:
+        log("Servers reachable")
     else:
-        log("⚠️ Streamlit may not be ready")
-    time.sleep(2)
+        log("Run: .venv/Scripts/python web/start.py")
+    return ok
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -277,11 +256,12 @@ def main():
     log(f"Start: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log("=" * 60)
 
-    start_servers()
+    if not check_servers():
+        sys.exit(1)
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=False)  # headless=True has network issues in CI
             ctx = browser.new_context(viewport={"width": 1400, "height": 900})
             page = ctx.new_page()
 
@@ -295,8 +275,7 @@ def main():
 
             browser.close()
     finally:
-        kill_port(PORT_API)
-        kill_port(PORT_WEB)
+        pass  # don't kill user's servers
 
     total = PASS + FAIL
     log(f"\n{'=' * 60}")
