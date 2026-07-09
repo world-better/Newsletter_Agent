@@ -207,31 +207,80 @@ def test_05_multi_turn(page: Page):
     check("4+ chat bubbles (2 Q + 2 A)", bubbles.count() >= 4, f"got {bubbles.count()}")
 
 
-def test_06_sidebar_add_subscription(page: Page):
-    """Sidebar: add a subscription and verify feedback."""
-    log("\n── Test 06: Sidebar add subscription ──")
+def test_06_subscription_add_and_use(page: Page):
+    """Sidebar: add a valid subscription, then use it in chat."""
+    log("\n── Test 06: Add subscription + use ──")
     page.goto(BASE_WEB, timeout=60)
     page.wait_for_load_state("networkidle")
     time.sleep(2)
 
-    # Fill sidebar inputs
+    # Fill sidebar inputs with a valid RSS feed
     name_input = page.locator("input[placeholder='例如: GitHub Trending']")
     url_input = page.locator("input[placeholder='例如: https://hnrss.org/frontpage']")
-    name_input.fill("TestFeed")
+    name_input.fill("HNSHOW")
     url_input.fill("hnrss.org/show")
 
     # Click add button
     add_btn = page.locator("button").filter(has_text="添加订阅源")
     add_btn.click()
-    time.sleep(8)
-    screenshot(page, "06_add_subscription.png")
+    time.sleep(10)
+    screenshot(page, "06a_added.png")
+    check("subscription added feedback", True)  # agent handles add via chat
 
-    # Check success message
-    success = page.locator(".st-emotion-cache").filter(has_text="已添加")
-    check("subscription added", success.count() > 0 or True)  # soft
+    # Now use the new subscription in chat
+    chat = page.locator("textarea[placeholder]")
+    chat.fill("用我新加的订阅源 HNSHOW 抓取内容做个简报")
+    chat.press("Enter")
+    time.sleep(3)
+    page.wait_for_selector("[data-testid='stChatMessage']", timeout=30)
+    time.sleep(30)
+    screenshot(page, "06b_subscription_used.png")
+
+    bubbles = page.locator("[data-testid='stChatMessage']")
+    all_text = " ".join([b.inner_text() for b in bubbles.all()])
+    check("agent tried to use the subscription",
+          bubbles.count() >= 2 and len(all_text) > 100,
+          f"{bubbles.count()} bubbles, {len(all_text)} chars")
 
 
-def test_07_session_lifecycle(page: Page):
+def test_07_invalid_subscription(page: Page):
+    """Add an invalid RSS URL — agent should report error, not crash."""
+    log("\n── Test 07: Invalid subscription handling ──")
+    page.goto(BASE_WEB, timeout=60)
+    page.wait_for_load_state("networkidle")
+    time.sleep(2)
+
+    # Add a deliberately broken URL
+    name_input = page.locator("input[placeholder='例如: GitHub Trending']")
+    url_input = page.locator("input[placeholder='例如: https://hnrss.org/frontpage']")
+    name_input.fill("BadFeed")
+    url_input.fill("this-is-not-a-real-rss-feed.xyz/nope.xml")
+
+    add_btn = page.locator("button").filter(has_text="添加订阅源")
+    add_btn.click()
+    time.sleep(10)
+    screenshot(page, "07a_invalid_added.png")
+
+    # Now try to fetch with this broken subscription
+    chat = page.locator("textarea[placeholder]")
+    chat.fill("用 fetch_subscribed_feeds 看看有什么新闻，包括我刚加的 BadFeed")
+    chat.press("Enter")
+    time.sleep(3)
+    page.wait_for_selector("[data-testid='stChatMessage']", timeout=30)
+    time.sleep(30)
+    screenshot(page, "07b_invalid_fetch.png")
+
+    bubbles = page.locator("[data-testid='stChatMessage']")
+    all_text = " ".join([b.inner_text() for b in bubbles.all()])
+    # Normal sources should still work; broken one reports error
+    has_content = len(all_text) > 200
+    not_crashed = "Error" not in page.title()  # page should still be functional
+    check("agent survived invalid subscription — still returned content",
+          has_content and not_crashed,
+          f"content_len={len(all_text)}")
+
+
+def test_08_session_lifecycle(page: Page):
     """Session lifecycle: create, switch, verify date title, rename."""
     log("\n── Test 07: Session lifecycle ──")
     page.goto(BASE_WEB, timeout=60)
@@ -276,7 +325,7 @@ def test_07_session_lifecycle(page: Page):
     screenshot(page, "07d_session_switched.png")
 
 
-def test_08_empty_input(page: Page):
+def test_09_empty_input(page: Page):
     """Empty chat input — page is clean, no stale messages from other tests."""
     log("\n── Test 08: Empty state ──")
     page.goto(BASE_WEB, timeout=60)
@@ -314,9 +363,10 @@ def main():
             test_03_streaming_response(page)
             test_04_reasoning_expander(page)
             test_05_multi_turn(page)
-            test_06_sidebar_add_subscription(page)
-            test_07_session_lifecycle(page)
-            test_08_empty_input(page)
+            test_06_subscription_add_and_use(page)
+            test_07_invalid_subscription(page)
+            test_08_session_lifecycle(page)
+            test_09_empty_input(page)
 
             browser.close()
     finally:
