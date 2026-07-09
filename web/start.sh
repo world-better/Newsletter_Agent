@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # ── 任意门聚合简报 · 容器启动脚本 ─────────────────────────
 # Starts FastAPI (backend) + Streamlit (frontend) in one container.
 # Traps SIGTERM for graceful shutdown.
