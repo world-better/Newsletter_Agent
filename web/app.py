@@ -53,6 +53,8 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "session_title" not in st.session_state:
     st.session_state.session_title = "新会话"
+if "streaming" not in st.session_state:
+    st.session_state.streaming = False
 
 
 # ── Streaming SSE consumer (threaded — yields tokens in real-time) ──────────
@@ -149,10 +151,13 @@ def render_sidebar():
     # ── Session list ──
     st.sidebar.markdown("### 💬 会话")
     if st.sidebar.button("＋ 新会话", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.session_id = None
-        st.session_state.session_title = ""
-        st.rerun()
+        if st.session_state.streaming:
+            st.sidebar.warning("当前回复生成中，请稍候...")
+        else:
+            st.session_state.messages = []
+            st.session_state.session_id = None
+            st.session_state.session_title = ""
+            st.rerun()
 
     user_sessions = _list_sessions()
     for s in (user_sessions or []):
@@ -163,10 +168,13 @@ def render_sidebar():
 
         col1, col2 = st.sidebar.columns([5, 1])
         if col1.button(f"{prefix}{label}", key=f"sess_{sid}", use_container_width=True):
-            st.session_state.session_id = sid
-            st.session_state.session_title = s.get("title", "")
-            st.session_state.messages = _load_session_messages(sid)
-            st.rerun()
+            if st.session_state.streaming:
+                st.sidebar.warning("当前回复生成中，请稍候...")
+            else:
+                st.session_state.session_id = sid
+                st.session_state.session_title = s.get("title", "")
+                st.session_state.messages = _load_session_messages(sid)
+                st.rerun()
 
         # Rename button (pencil)
         rename_key = f"renaming_{sid}"
@@ -222,6 +230,7 @@ def render_sidebar():
 
 def _process_user_message(prompt: str):
     """Send prompt to agent, stream reply in real-time, append to history."""
+    st.session_state.streaming = True
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -273,6 +282,7 @@ def _process_user_message(prompt: str):
                 "reasoning": "".join(reasoning_buf),
                 "tool_calls": tools_buf,
             })
+        st.session_state.streaming = False
 
 
 def main():
