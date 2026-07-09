@@ -34,3 +34,9 @@ class AgentService:
 
     async def list_sessions(self, user_id: str) -> list[dict]:
         return await self._db.list_sessions(user_id)
+
+    async def rename_session(self, session_id: str, title: str) -> bool:
+        return await self._db.rename_session(session_id, title)
+
+    async def get_session_messages(self, session_id: str) -> list[dict]:
+        return await self._db.get_session_messages(session_id)

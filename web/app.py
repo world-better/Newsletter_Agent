@@ -29,7 +29,6 @@ DEFAULT_SUBS = [
 
 SUGGESTIONS = [
     "看看HackerNews今天有什么",
-    "Show HN有什么新项目",
     "知乎日报今天聊了什么",
     "帮我聚合科技新闻做简报",
 ]
@@ -122,6 +121,28 @@ def _list_sessions() -> list[dict]:
         return []
 
 
+def _load_session_messages(session_id: str) -> list[dict]:
+    """Load message history for a session."""
+    try:
+        r = httpx.get(f"{API}/sessions/{session_id}/messages", timeout=5)
+        r.raise_for_status()
+        msgs = r.json().get("messages", [])
+        result = []
+        for m in msgs:
+            result.append({"role": m["role"], "content": m["content"]})
+        return result
+    except Exception:
+        return []
+
+
+def _rename_session(session_id: str, title: str):
+    """Rename a session via API."""
+    try:
+        httpx.patch(f"{API}/sessions/{session_id}", json={"title": title}, timeout=5)
+    except Exception:
+        pass
+
+
 # ── Sidebar ─────────────────────────────────────────────────────────────────
 
 def render_sidebar():
@@ -130,19 +151,21 @@ def render_sidebar():
     if st.sidebar.button("＋ 新会话", use_container_width=True):
         st.session_state.messages = []
         st.session_state.session_id = None
-        st.session_state.session_title = "新会话"
+        st.session_state.session_title = ""
         st.rerun()
 
     user_sessions = _list_sessions()
-    if user_sessions:
-        for s in user_sessions:
-            label = s.get("title", "新会话")[:20]
-            if st.sidebar.button(label, key=f"sess_{s['id']}", use_container_width=True):
-                st.session_state.session_id = s["id"]
-                st.session_state.session_title = s.get("title", "新会话")
-                # Load messages for this session — just set empty, agent context handles history
-                st.session_state.messages = []
-                st.rerun()
+    for s in (user_sessions or []):
+        sid = s["id"]
+        is_active = (st.session_state.session_id == sid)
+        label = s.get("title", "")[:25]
+        prefix = "▸ " if is_active else "  "
+        if st.sidebar.button(f"{prefix}{label}", key=f"sess_{sid}", use_container_width=True):
+            st.session_state.session_id = sid
+            st.session_state.session_title = s.get("title", "")
+            # Load message history for this session
+            st.session_state.messages = _load_session_messages(sid)
+            st.rerun()
 
     st.sidebar.markdown("---")
     st.sidebar.title("📡 订阅管理")

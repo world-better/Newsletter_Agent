@@ -1,4 +1,6 @@
 """DB layer — only aiosqlite lives here. Swap for postgres by replacing this file."""
+from datetime import datetime
+
 import aiosqlite
 
 
@@ -102,8 +104,9 @@ class DBService:
 
     # ── Sessions ───────────────────────────────────────────────────────────
 
-    async def create_session(self, user_id: str, title: str = "新会话") -> dict:
+    async def create_session(self, user_id: str, title: str | None = None) -> dict:
         sid = str(__import__("uuid").uuid4())
+        title = title or datetime.now().strftime("%m-%d %H:%M")
         await self._conn.execute(
             "INSERT INTO sessions(id, user_id, title) VALUES(?,?,?)",
             (sid, user_id, title)
@@ -115,6 +118,21 @@ class DBService:
         cursor = await self._conn.execute(
             "SELECT id, title, created_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
             (user_id,)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def rename_session(self, session_id: str, title: str) -> bool:
+        cursor = await self._conn.execute(
+            "UPDATE sessions SET title = ? WHERE id = ?",
+            (title, session_id)
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_session_messages(self, session_id: str) -> list[dict]:
+        cursor = await self._conn.execute(
+            "SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+            (session_id,)
         )
         return [dict(r) for r in await cursor.fetchall()]
 

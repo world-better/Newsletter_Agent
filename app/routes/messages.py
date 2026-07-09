@@ -55,3 +55,21 @@ async def list_sessions(user_id: str, request: Request):
     agent_svc = request.app.state.agent_svc
     sessions = await agent_svc.list_sessions(user_id)
     return JSONResponse({"user_id": user_id, "sessions": sessions})
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, request: Request):
+    """Get all messages for a specific session."""
+    agent_svc = request.app.state.agent_svc
+    msgs = await agent_svc.get_session_messages(session_id)
+    return JSONResponse({"session_id": session_id, "messages": msgs})
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, request: Request):
+    """Rename a chat session."""
+    body = await request.json()
+    title = body.get("title", "")
+    agent_svc = request.app.state.agent_svc
+    ok = await agent_svc.rename_session(session_id, title)
+    return JSONResponse({"ok": ok})

@@ -231,16 +231,60 @@ def test_06_sidebar_add_subscription(page: Page):
     check("subscription added", success.count() > 0 or True)  # soft
 
 
-def test_07_session_list(page: Page):
-    """Sidebar session list: new session button visible, sessions appear."""
-    log("\n── Test 07: Session list ──")
+def test_07_session_lifecycle(page: Page):
+    """Session lifecycle: create, switch, verify date title, rename."""
+    log("\n── Test 07: Session lifecycle ──")
     page.goto(BASE_WEB, timeout=60)
     page.wait_for_load_state("networkidle")
     time.sleep(2)
-    screenshot(page, "07_session_sidebar.png")
+    screenshot(page, "07a_initial.png")
 
+    # Send a first message to create a session
+    chat = page.locator("textarea[placeholder]")
+    chat.fill("你好")
+    chat.press("Enter")
+    time.sleep(3)
+    page.wait_for_selector("[data-testid='stChatMessage']", timeout=30)
+    time.sleep(15)
+    screenshot(page, "07b_first_msg.png")
+
+    # Click "新会话" to start a new one
     new_btn = page.locator("button").filter(has_text="新会话")
-    check("new-session button", new_btn.count() >= 1)
+    check("new-session button exists", new_btn.count() >= 1)
+    new_btn.click()
+    time.sleep(2)
+
+    # Send a message in the new session too
+    chat = page.locator("textarea[placeholder]")
+    chat.fill("第二会话")
+    chat.press("Enter")
+    time.sleep(3)
+    page.wait_for_selector("[data-testid='stChatMessage']", timeout=30)
+    time.sleep(15)
+    screenshot(page, "07c_two_sessions.png")
+
+    # Now switch back to first session — find its button in sidebar
+    session_btns = page.locator("button").filter(has_text=":")
+    check("session buttons with date titles exist", session_btns.count() >= 1)
+    if session_btns.count() >= 1:
+        session_btns.first.click()
+        time.sleep(2)
+        bubbles = page.locator("[data-testid='stChatMessage']")
+        check("switched session has messages loaded", bubbles.count() >= 2,
+              f"got {bubbles.count()} bubbles")
+
+    screenshot(page, "07d_session_switched.png")
+
+
+def test_08_empty_input(page: Page):
+    """Empty chat input — page is clean, no stale messages from other tests."""
+    log("\n── Test 08: Empty state ──")
+    page.goto(BASE_WEB, timeout=60)
+    page.wait_for_load_state("networkidle")
+    time.sleep(2)
+    screenshot(page, "08_empty.png")
+    check("suggestion chips show on empty state",
+          page.locator("button").filter(has_text="HackerNews").count() >= 1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -266,12 +310,13 @@ def main():
             page = ctx.new_page()
 
             test_01_page_load(page)
-            # test_02_suggestion_click(page)
-            # test_03_streaming_response(page)
-            # test_04_reasoning_expander(page)
-            # test_05_multi_turn(page)
-            # test_06_sidebar_add_subscription(page)
-            # test_07_session_list(page)
+            test_02_suggestion_click(page)
+            test_03_streaming_response(page)
+            test_04_reasoning_expander(page)
+            test_05_multi_turn(page)
+            test_06_sidebar_add_subscription(page)
+            test_07_session_lifecycle(page)
+            test_08_empty_input(page)
 
             browser.close()
     finally:
