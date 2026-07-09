@@ -31,4 +31,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 EXPOSE 8001 8501
 
-CMD ["sh", "web/start.sh"]
+CMD ["/bin/bash", "web/start.sh"]
